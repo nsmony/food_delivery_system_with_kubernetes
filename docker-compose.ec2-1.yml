@@ -1,0 +1,16 @@
+services:
+  api-service:
+    build: ./api-service
+    ports: ["8080:8080"]
+    env_file: ./api-service/.env
+    restart: unless-stopped
+  registration-service:
+    build: ./registration-service
+    ports: ["8081:8081"]
+    env_file: ./registration-service/.env
+    restart: unless-stopped
+  login-service:
+    build: ./login-service
+    ports: ["8082:8082"]
+    env_file: ./login-service/.env
+    restart: unless-stopped
