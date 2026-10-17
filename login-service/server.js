@@ -54,5 +54,29 @@ app.put('/login/change-password', wrap(async (req, res) => {
     res.json({ message: 'Password changed successfully' });
 }));
 
+// user can only touch their own profile (admin can touch any)
+const canAccess = req =>
+    req.headers['x-user-id'] === req.params.id || req.headers['x-user-role'] === 'admin';
+
+// VIEW PROFILE (token required)
+app.get('/users/profile/:id', wrap(async (req, res) => {
+    if (!canAccess(req)) return res.status(403).json({ message: 'You can only view your own profile' });
+    const user = await User.findById(req.params.id).select('-password');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+}));
+
+// UPDATE PROFILE (token required)
+app.put('/users/profile/:id', wrap(async (req, res) => {
+    if (!canAccess(req)) return res.status(403).json({ message: 'You can only update your own profile' });
+    const updates = {};
+    ['name', 'phone', 'address', 'vehicleType'].forEach(f => {
+        if (req.body[f] !== undefined) updates[f] = req.body[f];
+    });
+    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).select('-password');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json({ message: 'Profile updated', user });
+}));
+
 app.listen(process.env.PORT || 8082, () =>
     console.log(`Login Service is running on PORT NO : ${process.env.PORT || 8082}`));

@@ -101,10 +101,11 @@ app.get('/health', (req, res) => res.json({ status: 'ok', customerInstances: hea
 
 // PUBLIC ROUTES
 app.post('/register', forward(REGISTRATION_URL));
+app.get('/register/check-email', forward(REGISTRATION_URL));
 app.post('/login', forward(LOGIN_URL));
 
 // ANY LOGGED-IN USER
-app.use('/register/profile', authToken, forward(REGISTRATION_URL));
+app.use('/users/profile', authToken, forward(LOGIN_URL));
 app.use('/login/validate', authToken, forward(LOGIN_URL));
 app.use('/login/change-password', authToken, forward(LOGIN_URL));
 

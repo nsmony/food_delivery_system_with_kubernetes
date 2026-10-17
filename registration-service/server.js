@@ -15,10 +15,6 @@ const ROLES = ['admin', 'owner', 'user', 'delivery'];
 const wrap = fn => (req, res) => fn(req, res).catch(err =>
     res.status(err.name === 'CastError' ? 400 : 500).json({ message: err.message }));
 
-// user can only touch their own profile (admin can touch any)
-const canAccess = req =>
-    req.headers['x-user-id'] === req.params.id || req.headers['x-user-role'] === 'admin';
-
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // REGISTER (public)
@@ -39,24 +35,12 @@ app.post('/register', wrap(async (req, res) => {
     });
 }));
 
-// VIEW PROFILE (token required)
-app.get('/register/profile/:id', wrap(async (req, res) => {
-    if (!canAccess(req)) return res.status(403).json({ message: 'You can only view your own profile' });
-    const user = await User.findById(req.params.id).select('-password');
-    if (!user) return res.status(404).json({ message: 'User not found' });
-    res.json(user);
-}));
-
-// UPDATE PROFILE (token required)
-app.put('/register/profile/:id', wrap(async (req, res) => {
-    if (!canAccess(req)) return res.status(403).json({ message: 'You can only update your own profile' });
-    const updates = {};
-    ['name', 'phone', 'address', 'vehicleType'].forEach(f => {
-        if (req.body[f] !== undefined) updates[f] = req.body[f];
-    });
-    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).select('-password');
-    if (!user) return res.status(404).json({ message: 'User not found' });
-    res.json({ message: 'Profile updated', user });
+// CHECK IF AN EMAIL IS AVAILABLE (public)
+app.get('/register/check-email', wrap(async (req, res) => {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ message: 'email query parameter is required' });
+    const exists = await User.findOne({ email: email.toLowerCase() });
+    res.json({ email, available: !exists });
 }));
 
 app.listen(process.env.PORT || 8081, () =>
