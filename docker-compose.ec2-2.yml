@@ -2,15 +2,20 @@ services:
   admin-service:
     build: ./admin-service
     ports: ["8083:8083"]
-    env_file: ./admin-service/.env
+    environment:
+      MONGO_URI: ${MONGO_URI}
     restart: unless-stopped
+
   owner-service:
     build: ./owner-service
     ports: ["8084:8084"]
-    env_file: ./owner-service/.env
+    environment:
+      MONGO_URI: ${MONGO_URI}
     restart: unless-stopped
+
   delivery-service:
     build: ./delivery-service
     ports: ["8086:8086"]
-    env_file: ./delivery-service/.env
+    environment:
+      MONGO_URI: ${MONGO_URI}
     restart: unless-stopped

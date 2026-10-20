@@ -2,7 +2,7 @@ services:
   customer-service:
     build: ./customer-service
     ports: ["8085:8085"]
-    env_file: ./customer-service/.env
-    restart: unless-stopped
     environment:
+      MONGO_URI: ${MONGO_URI}
       INSTANCE_NAME: Customer-A
+    restart: unless-stopped
