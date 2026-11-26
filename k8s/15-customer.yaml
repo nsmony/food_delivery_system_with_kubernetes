@@ -1,0 +1,87 @@
+# Customer Microservice (port 8085), 2 replicas. The Service spreads requests across both pods;
+# INSTANCE_NAME is the pod name, so /customer/instance-info shows which pod answered.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-service
+  namespace: fooddelivery
+  labels:
+    app: customer-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: customer-service
+  template:
+    metadata:
+      labels:
+        app: customer-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: customer-service
+          image: nsmony/customer-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8085
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PORT
+              value: "8085"
+            - name: SERVICE_NAME
+              value: customer-service
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: MONGO_URI
+            - name: INSTANCE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8085
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8085
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log/app
+      volumes:
+        - name: logs
+          persistentVolumeClaim:
+            claimName: app-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-service
+  namespace: fooddelivery
+  labels:
+    app: customer-service
+spec:
+  type: ClusterIP        # internal only: clients cannot reach this service directly
+  selector:
+    app: customer-service
+  ports:
+    - port: 8085
+      targetPort: 8085

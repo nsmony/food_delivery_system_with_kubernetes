@@ -1,0 +1,87 @@
+# Login Microservice (port 8082); issues the JWT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: login-service
+  namespace: fooddelivery
+  labels:
+    app: login-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: login-service
+  template:
+    metadata:
+      labels:
+        app: login-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: login-service
+          image: nsmony/login-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PORT
+              value: "8082"
+            - name: SERVICE_NAME
+              value: login-service
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: MONGO_URI
+            - name: JWT_SECRETE
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: JWT_SECRETE
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log/app
+      volumes:
+        - name: logs
+          persistentVolumeClaim:
+            claimName: app-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: login-service
+  namespace: fooddelivery
+  labels:
+    app: login-service
+spec:
+  type: ClusterIP        # internal only: clients cannot reach this service directly
+  selector:
+    app: login-service
+  ports:
+    - port: 8082
+      targetPort: 8082

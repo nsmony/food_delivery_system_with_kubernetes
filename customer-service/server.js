@@ -10,7 +10,22 @@ const Coupon = require('./models/Coupon');
 const Review = require('./models/Review');
 
 const app = express();
+
+// request logging to a file on the shared Kubernetes volume (only when LOG_DIR is set)
+if (process.env.LOG_DIR) {
+    const fs = require('fs');
+    const logFile = `${process.env.LOG_DIR}/${process.env.SERVICE_NAME || 'service'}-${require('os').hostname()}.log`;
+    try { fs.mkdirSync(process.env.LOG_DIR, { recursive: true }); } catch (e) { console.error('Log dir error:', e.message); }
+    app.use((req, res, next) => {
+        res.on('finish', () => {
+            if (req.originalUrl === '/health') return; // skip Kubernetes probes
+            fs.appendFile(logFile, `${new Date().toISOString()} ${req.method} ${req.originalUrl} ${res.statusCode}\n`, () => {});
+        });
+        next();
+    });
+}
 app.use(express.json());
+app.use((req, res, next) => { req.body = req.body || {}; next(); }); // GET/DELETE may arrive without a body
 
 const INSTANCE_NAME = process.env.INSTANCE_NAME || 'Customer-A';
 
@@ -35,10 +50,13 @@ app.get('/customer/restaurants', wrap(async (req, res) => {
     res.json(await Restaurant.find({ status: 'APPROVED' }));
 }));
 
-app.get('/customer/restaurants/:id/menu', wrap(async (req, res) => {
-    const restaurant = await Restaurant.findOne({ _id: req.params.id, status: 'APPROVED' });
+// body: { "restaurantId": "..." }
+app.get('/customer/restaurants/menu', wrap(async (req, res) => {
+    const { restaurantId } = req.body;
+    if (!restaurantId) return res.status(400).json({ message: 'restaurantId is required in the body' });
+    const restaurant = await Restaurant.findOne({ _id: restaurantId, status: 'APPROVED' });
     if (!restaurant) return res.status(404).json({ message: 'Restaurant not found' });
-    const menu = await MenuItem.find({ restaurantId: req.params.id, available: true });
+    const menu = await MenuItem.find({ restaurantId, available: true });
     res.json({ restaurant: restaurant.name, menu });
 }));
 
@@ -75,11 +93,14 @@ app.get('/customer/cart', wrap(async (req, res) => {
     res.json({ cart, total });
 }));
 
-app.delete('/customer/cart/:itemId', wrap(async (req, res) => {
+// body: { "menuItemId": "..." }
+app.delete('/customer/cart', wrap(async (req, res) => {
+    const { menuItemId } = req.body;
+    if (!menuItemId) return res.status(400).json({ message: 'menuItemId is required in the body' });
     const cart = await Cart.findOne({ userId: userId(req) });
     if (!cart) return res.status(404).json({ message: 'Cart is empty' });
     const before = cart.items.length;
-    cart.items = cart.items.filter(i => String(i.menuItemId) !== req.params.itemId);
+    cart.items = cart.items.filter(i => String(i.menuItemId) !== String(menuItemId));
     if (cart.items.length === before) return res.status(404).json({ message: 'Item not in cart' });
     await cart.save();
     res.json({ message: 'Item removed from cart', cart });
@@ -122,14 +143,20 @@ app.get('/customer/orders', wrap(async (req, res) => {
     res.json(await Order.find({ userId: userId(req) }).sort({ createdAt: -1 }));
 }));
 
-app.get('/customer/orders/:id', wrap(async (req, res) => {
-    const order = await Order.findOne({ _id: req.params.id, userId: userId(req) });
+// body: { "orderId": "..." }
+app.get('/customer/orders/details', wrap(async (req, res) => {
+    const { orderId } = req.body;
+    if (!orderId) return res.status(400).json({ message: 'orderId is required in the body' });
+    const order = await Order.findOne({ _id: orderId, userId: userId(req) });
     if (!order) return res.status(404).json({ message: 'Order not found' });
     res.json(order);
 }));
 
-app.put('/customer/orders/:id/cancel', wrap(async (req, res) => {
-    const order = await Order.findOne({ _id: req.params.id, userId: userId(req) });
+// body: { "orderId": "..." }
+app.put('/customer/orders/cancel', wrap(async (req, res) => {
+    const { orderId } = req.body;
+    if (!orderId) return res.status(400).json({ message: 'orderId is required in the body' });
+    const order = await Order.findOne({ _id: orderId, userId: userId(req) });
     if (!order) return res.status(404).json({ message: 'Order not found' });
     if (order.status !== 'PLACED')
         return res.status(400).json({ message: `Cannot cancel, order is already ${order.status}` });
@@ -156,8 +183,11 @@ app.post('/customer/reviews', wrap(async (req, res) => {
     res.status(201).json({ message: 'Review added', review });
 }));
 
-app.get('/customer/reviews/restaurant/:id', wrap(async (req, res) => {
-    const reviews = await Review.find({ restaurantId: req.params.id }).sort({ createdAt: -1 });
+// body: { "restaurantId": "..." }
+app.get('/customer/reviews', wrap(async (req, res) => {
+    const { restaurantId } = req.body;
+    if (!restaurantId) return res.status(400).json({ message: 'restaurantId is required in the body' });
+    const reviews = await Review.find({ restaurantId }).sort({ createdAt: -1 });
     const average = reviews.length
         ? +(reviews.reduce((s, r) => s + r.rating, 0) / reviews.length).toFixed(1) : 0;
     res.json({ averageRating: average, totalReviews: reviews.length, reviews });

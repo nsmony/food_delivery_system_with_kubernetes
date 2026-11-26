@@ -1,0 +1,82 @@
+# Admin Microservice (port 8083)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-service
+  namespace: fooddelivery
+  labels:
+    app: admin-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-service
+  template:
+    metadata:
+      labels:
+        app: admin-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: admin-service
+          image: nsmony/admin-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PORT
+              value: "8083"
+            - name: SERVICE_NAME
+              value: admin-service
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: MONGO_URI
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log/app
+      volumes:
+        - name: logs
+          persistentVolumeClaim:
+            claimName: app-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-service
+  namespace: fooddelivery
+  labels:
+    app: admin-service
+spec:
+  type: ClusterIP        # internal only: clients cannot reach this service directly
+  selector:
+    app: admin-service
+  ports:
+    - port: 8083
+      targetPort: 8083

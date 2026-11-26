@@ -6,7 +6,22 @@ const MenuItem = require('./models/MenuItem');
 const Order = require('./models/Order');
 
 const app = express();
+
+// request logging to a file on the shared Kubernetes volume (only when LOG_DIR is set)
+if (process.env.LOG_DIR) {
+    const fs = require('fs');
+    const logFile = `${process.env.LOG_DIR}/${process.env.SERVICE_NAME || 'service'}-${require('os').hostname()}.log`;
+    try { fs.mkdirSync(process.env.LOG_DIR, { recursive: true }); } catch (e) { console.error('Log dir error:', e.message); }
+    app.use((req, res, next) => {
+        res.on('finish', () => {
+            if (req.originalUrl === '/health') return; // skip Kubernetes probes
+            fs.appendFile(logFile, `${new Date().toISOString()} ${req.method} ${req.originalUrl} ${res.statusCode}\n`, () => {});
+        });
+        next();
+    });
+}
 app.use(express.json());
+app.use((req, res, next) => { req.body = req.body || {}; next(); }); // GET/DELETE may arrive without a body
 
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('Owner Service: MongoDB connected'))
@@ -32,13 +47,16 @@ app.get('/owner/restaurants', wrap(async (req, res) => {
     res.json(await Restaurant.find({ ownerId: ownerId(req) }));
 }));
 
-app.put('/owner/restaurants/:id', wrap(async (req, res) => {
+// body: { "restaurantId": "...", "name": "...", "address": "...", "cuisine": "...", "phone": "..." }
+app.put('/owner/restaurants', wrap(async (req, res) => {
+    const { restaurantId } = req.body;
+    if (!restaurantId) return res.status(400).json({ message: 'restaurantId is required in the body' });
     const updates = {};
     ['name', 'address', 'cuisine', 'phone'].forEach(f => {
         if (req.body[f] !== undefined) updates[f] = req.body[f];
     });
     const restaurant = await Restaurant.findOneAndUpdate(
-        { _id: req.params.id, ownerId: ownerId(req) }, updates, { new: true });
+        { _id: restaurantId, ownerId: ownerId(req) }, updates, { new: true });
     if (!restaurant) return res.status(404).json({ message: 'Restaurant not found (or not yours)' });
     res.json({ message: 'Restaurant updated', restaurant });
 }));
@@ -54,14 +72,20 @@ app.post('/owner/menu', wrap(async (req, res) => {
     res.status(201).json({ message: 'Menu item added', item });
 }));
 
-app.get('/owner/menu/restaurant/:restaurantId', wrap(async (req, res) => {
-    if (!(await ownsRestaurant(req.params.restaurantId, req)))
+// body: { "restaurantId": "..." }
+app.get('/owner/menu', wrap(async (req, res) => {
+    const { restaurantId } = req.body;
+    if (!restaurantId) return res.status(400).json({ message: 'restaurantId is required in the body' });
+    if (!(await ownsRestaurant(restaurantId, req)))
         return res.status(403).json({ message: 'This restaurant is not yours' });
-    res.json(await MenuItem.find({ restaurantId: req.params.restaurantId }));
+    res.json(await MenuItem.find({ restaurantId }));
 }));
 
-app.put('/owner/menu/:itemId', wrap(async (req, res) => {
-    const item = await MenuItem.findById(req.params.itemId);
+// body: { "itemId": "...", "name": "...", "description": "...", "price": 9, "available": true }
+app.put('/owner/menu', wrap(async (req, res) => {
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ message: 'itemId is required in the body' });
+    const item = await MenuItem.findById(itemId);
     if (!item) return res.status(404).json({ message: 'Menu item not found' });
     if (!(await ownsRestaurant(item.restaurantId, req)))
         return res.status(403).json({ message: 'This item is not yours' });
@@ -72,8 +96,11 @@ app.put('/owner/menu/:itemId', wrap(async (req, res) => {
     res.json({ message: 'Menu item updated', item });
 }));
 
-app.delete('/owner/menu/:itemId', wrap(async (req, res) => {
-    const item = await MenuItem.findById(req.params.itemId);
+// body: { "itemId": "..." }
+app.delete('/owner/menu', wrap(async (req, res) => {
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ message: 'itemId is required in the body' });
+    const item = await MenuItem.findById(itemId);
     if (!item) return res.status(404).json({ message: 'Menu item not found' });
     if (!(await ownsRestaurant(item.restaurantId, req)))
         return res.status(403).json({ message: 'This item is not yours' });
@@ -89,11 +116,13 @@ app.get('/owner/orders', wrap(async (req, res) => {
 
 const NEXT_STATUS = { PLACED: 'ACCEPTED', ACCEPTED: 'PREPARING', PREPARING: 'READY' };
 
-app.put('/owner/orders/:orderId/status', wrap(async (req, res) => {
-    const { status } = req.body;
+// body: { "orderId": "...", "status": "ACCEPTED" }
+app.put('/owner/orders/status', wrap(async (req, res) => {
+    const { orderId, status } = req.body;
+    if (!orderId) return res.status(400).json({ message: 'orderId is required in the body' });
     if (!['ACCEPTED', 'PREPARING', 'READY'].includes(status))
         return res.status(400).json({ message: 'status must be ACCEPTED, PREPARING or READY' });
-    const order = await Order.findById(req.params.orderId);
+    const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
     if (!(await ownsRestaurant(order.restaurantId, req)))
         return res.status(403).json({ message: 'This order is not for your restaurant' });

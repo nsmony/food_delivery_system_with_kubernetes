@@ -2,6 +2,20 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 
+// request logging to a file on the shared Kubernetes volume (only when LOG_DIR is set)
+if (process.env.LOG_DIR) {
+    const fs = require('fs');
+    const logFile = `${process.env.LOG_DIR}/${process.env.SERVICE_NAME || 'service'}-${require('os').hostname()}.log`;
+    try { fs.mkdirSync(process.env.LOG_DIR, { recursive: true }); } catch (e) { console.error('Log dir error:', e.message); }
+    app.use((req, res, next) => {
+        res.on('finish', () => {
+            if (req.originalUrl === '/health') return; // skip Kubernetes probes
+            fs.appendFile(logFile, `${new Date().toISOString()} ${req.method} ${req.originalUrl} ${res.statusCode}\n`, () => {});
+        });
+        next();
+    });
+}
+
 // USE PROXY SERVER TO REDIRECT THE INCOMING REQUEST
 const httpProxy = require('http-proxy');
 const proxy = httpProxy.createProxyServer();
@@ -14,7 +28,9 @@ const LOGIN_URL = process.env.LOGIN_URL;
 const ADMIN_URL = process.env.ADMIN_URL;
 const OWNER_URL = process.env.OWNER_URL;
 const DELIVERY_URL = process.env.DELIVERY_URL;
-const CUSTOMER_URLS = (process.env.CUSTOMER_URLS || '').split(',').map(s => s.trim()).filter(Boolean);
+// customer is forwarded to the customer-service ClusterIP Service,
+// which load balances across the Customer pods (kube-proxy)
+const CUSTOMER_URL = process.env.CUSTOMER_URL;
 
 // Never trust identity headers coming from the client
 app.use((req, res, next) => {
@@ -56,48 +72,7 @@ const forward = target => (req, res) => {
     });
 };
 
-// ---------------- LOAD BALANCER for the Customer Microservice ----------------
-// Round-robin over CUSTOMER_URLS, skipping instances that fail the health check.
-const health = Object.fromEntries(CUSTOMER_URLS.map(u => [u, true]));
-let rr = 0;
-
-async function checkHealth() {
-    for (const url of CUSTOMER_URLS) {
-        try {
-            const r = await fetch(url + '/health', { signal: AbortSignal.timeout(2000) });
-            health[url] = r.ok;
-        } catch {
-            health[url] = false;
-        }
-    }
-}
-setInterval(checkHealth, 5000);
-checkHealth();
-
-function pickCustomerInstance(exclude) {
-    const alive = CUSTOMER_URLS.filter(u => health[u] && !exclude.includes(u));
-    if (alive.length === 0) return null;
-    return alive[rr++ % alive.length];
-}
-
-function customerLoadBalancer(req, res) {
-    req.url = req.originalUrl;
-    const tried = [];
-    const attempt = () => {
-        const target = pickCustomerInstance(tried);
-        if (!target) return res.status(503).json({ message: 'No customer service instance available' });
-        tried.push(target);
-        console.log(`[LOAD BALANCER] ${req.method} ${req.originalUrl} -> ${target}`);
-        proxy.web(req, res, { target }, () => {
-            health[target] = false; // mark down, health check will bring it back
-            if (req.method === 'GET' && !res.headersSent) return attempt(); // failover
-            if (!res.headersSent) res.status(502).json({ message: 'Bad gateway' });
-        });
-    };
-    attempt();
-}
-
-app.get('/health', (req, res) => res.json({ status: 'ok', customerInstances: health }));
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // PUBLIC ROUTES
 app.post('/register', forward(REGISTRATION_URL));
@@ -124,7 +99,7 @@ app.use('/delivery', authToken, authRole('delivery'), (req, res) => {
 });
 app.use('/customer', authToken, authRole('user'), (req, res) => {
     console.log('INSIDE API GATEWAY CUSTOMER ROUTE');
-    customerLoadBalancer(req, res);
+    forward(CUSTOMER_URL)(req, res);
 });
 
 app.listen(process.env.PORT || 8080, () => {

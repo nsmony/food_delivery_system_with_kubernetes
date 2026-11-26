@@ -1,0 +1,82 @@
+# Restaurant Owner Microservice (port 8084)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: owner-service
+  namespace: fooddelivery
+  labels:
+    app: owner-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: owner-service
+  template:
+    metadata:
+      labels:
+        app: owner-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: owner-service
+          image: nsmony/owner-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PORT
+              value: "8084"
+            - name: SERVICE_NAME
+              value: owner-service
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: MONGO_URI
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8084
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8084
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log/app
+      volumes:
+        - name: logs
+          persistentVolumeClaim:
+            claimName: app-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: owner-service
+  namespace: fooddelivery
+  labels:
+    app: owner-service
+spec:
+  type: ClusterIP        # internal only: clients cannot reach this service directly
+  selector:
+    app: owner-service
+  ports:
+    - port: 8084
+      targetPort: 8084

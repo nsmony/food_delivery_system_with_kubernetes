@@ -1,0 +1,13 @@
+# Kubernetes Volume shared by every service pod and the log-reader pod.
+# ReadWriteOnce allows several pods to mount it when they run on the same node (single-node Minikube).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-logs
+  namespace: fooddelivery
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
