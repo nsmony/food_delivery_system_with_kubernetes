@@ -1,5 +1,4 @@
 # Second consumer of the shared volume: reads the log files written by every service pod.
-# Demo: kubectl logs deploy/log-reader -n fooddelivery
 apiVersion: apps/v1
 kind: Deployment
 metadata:
